@@ -1,0 +1,77 @@
+if(folder_moved) {
+
+  folder_to_zip <- FolderName  
+  zip_file <- paste0("c:\\temp\\", folder_to_zip, ".zip")
+  max_size_bytes <- 25 * 1024 * 1024
+
+  suppressWarnings(
+    zip::zip(zip_file, 
+             files = folder_to_zip, 
+             root = '\\\\oh2shared/oh2actuarial/National/Disruption Insourcing/_Production Finished Batch/')
+  )
+
+  zip_file_size <- fs::file_info(zip_file)$size
+  num_flags <- sum(Disruption_Data$Flag == "FLAG", na.rm = TRUE)
+
+  bl_body <- if (zip_file_size <= max_size_bytes) {
+    paste0("The ", Parameters$Values[1], " disruption is finished and has been attached.<br /><br />
+Please reach out if you have any questions and have a wonderful day!<br /><br />
+<em>This is an automated message</em>")
+  } else {
+    paste0("The ", Parameters$Values[1], " disruption is finished and may be found here: <br /><br />
+<a href='\\\\\\oh2shared\\oh2actuarial\\National\\Disruption Insourcing\\_Production Finished Batch\\", FolderName, "\\'> Link to the finished disruption </a><br /><br />
+This disruption has ", num_flags, " flagged records.<br />
+If you do not have access to this folder location, please reach out to NetworkAnalysisUnit@anthem.com.<br /><br />
+Please reach out if you have any questions and have a wonderful day!")
+  }
+
+  bl_em <- compose_email(body = md(bl_body))
+
+  if (zip_file_size <= max_size_bytes) {
+    bl_em <- bl_em %>%
+      add_attachment(file = zip_file)
+  }
+
+  # --- Custom reroute logic based on network match thresholds ---
+  if (substring(FileName, 1, 4) == 'auto') {
+
+    # Compute match percentage
+    total_rows <- nrow(Disruption_Data)
+    matched_rows <- sum(Disruption_Data$PAR_NPI == 'Y' | Disruption_Data$PAR_TIN == 'Y', na.rm = TRUE)
+    match_pct <- matched_rows / total_rows
+
+    # Define NTWK_CD thresholds (extendable)
+    Custom_Thresholds <- data.frame(
+      NTWK_CD = c("18M0"),   # Add more NTWK_CDs as needed
+      Threshold = c(0.70)
+    )
+
+    # Ensure Select_Parameters has NTWK_CD (joined earlier via Select_Data_XWALK)
+    selected_ntwks <- unique(na.omit(Select_Parameters$NTWK_CD))
+
+    # Pull lowest applicable threshold from matched NTWK_CDs
+    applicable_threshold <- Custom_Thresholds %>%
+      filter(NTWK_CD %in% selected_ntwks) %>%
+      arrange(Threshold) %>%
+      pull(Threshold) %>%
+      first()
+
+    # Default to 95% if no matching NTWK_CD
+    if (is.na(applicable_threshold)) applicable_threshold <- 0.95
+
+    # Reroute if below threshold
+    if (match_pct < applicable_threshold) {
+      Analyst_Email <- "NetworkAnalysisUnit@healthcare.com"
+    }
+  }
+
+  # --- Send the email ---
+  bl_em %>% smtp_send(
+    from = creds_key(id = "my_creds")$user,
+    to = Analyst_Email,
+    subject = paste0("Disruption Finished - ", Parameters$Values[1]),
+    credentials = creds_key(id = "my_creds")
+  )
+
+  fs::file_delete(zip_file)
+}
