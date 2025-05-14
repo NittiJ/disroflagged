@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Add Provider Grouping Breakout Tab to Output
+# ─────────────────────────────────────────────────────────────────────────────
+
+library(dplyr)
+library(openxlsx)
+
+# Extract sheet name & row range for reading from original file
+sheet_name <- Tab_Info[1, 2]
+row_start <- as.numeric(Tab_Info[2, 2])
+row_end <- as.numeric(Tab_Info[3, 2])
+
+# Read Column M (13th column) = Provider Group Category (e.g., PCP, Specialist)
+provider_group_col <- openxlsx::read.xlsx(
+  FileName,
+  sheet = sheet_name,
+  rows = row_start:row_end,
+  cols = 13,  # Column M
+  colNames = FALSE
+)[[1]]
+
+# Attach to Disruption_Data for analysis
+Disruption_Data$Provider_Group <- provider_group_col
+
+# ───── Create Overall Breakout ─────
+group_breakout_overall <- Disruption_Data %>%
+  filter(!is.na(Provider_Group)) %>%
+  group_by(Provider_Group) %>%
+  summarise(Count = n(), .groups = "drop") %>%
+  mutate(Percentage = round(Count / sum(Count) * 100, 2)) %>%
+  arrange(desc(Count))
+
+# ───── Create Breakout by State ─────
+group_breakout_state <- Disruption_Data %>%
+  filter(!is.na(Provider_Group) & !is.na(Prov_State)) %>%
+  group_by(Prov_State, Provider_Group) %>%
+  summarise(Count = n(), .groups = "drop") %>%
+  group_by(Prov_State) %>%
+  mutate(Percentage = round(Count / sum(Count) * 100, 2)) %>%
+  ungroup() %>%
+  arrange(Prov_State, desc(Count))
+
+# ───── Write to New Tab in WB_Final ─────
+openxlsx::addWorksheet(WB_Final, "Provider Grouping Breakout")
+
+# Write the overall table at the top
+openxlsx::writeData(WB_Final,
+                    sheet = "Provider Grouping Breakout",
+                    x = group_breakout_overall,
+                    startRow = 1, startCol = 1)
+
+# Leave some space and write the state-by-state table below
+start_row_state <- nrow(group_breakout_overall) + 4
+openxlsx::writeData(WB_Final,
+                    sheet = "Provider Grouping Breakout",
+                    x = group_breakout_state,
+                    startRow = start_row_state, startCol = 1)
