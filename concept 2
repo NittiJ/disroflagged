@@ -5,14 +5,15 @@ if (folder_moved) {
   max_size_bytes  <- 25 * 1024 * 1024
 
   suppressWarnings(
-    zip::zip(zip_file, 
-             files = folder_to_zip, 
-             root = '\\\\oh2shared\\oh2actuarial\\National\\Disruption Insourcing\\_Production Finished Batch/')
+    zip::zip(zip_file,
+             files = folder_to_zip,
+             root  = '\\\\oh2shared\\oh2actuarial\\National\\Disruption Insourcing\\_Production Finished Batch/')
   )
 
   zip_file_size <- fs::file_info(zip_file)$size
   num_flags     <- sum(Disruption_Data$Flag == "FLAG", na.rm = TRUE)
 
+  # Default email body
   bl_body <- if (zip_file_size <= max_size_bytes) {
     paste0("The ", Parameters$Values[1], " disruption is finished and has been attached.<br><br>",
            "Please reach out if you have any questions and have a wonderful day!<br><br>",
@@ -27,81 +28,68 @@ if (folder_moved) {
   }
 
   subject_line  <- paste0("Disruption Finished - ", Parameters$Values[1])
-  Analyst_Email <- Parameters$Values[3]  # default
+  Analyst_Email <- Parameters$Values[3]  # default to original requestor
 
-  # --- Match % check for auto files ---
+  # --- Custom reroute logic for auto files ---
   if (substring(FileName, 1, 4) == "auto") {
 
-    # Define base thresholds
-    default_threshold <- 0.95
-    HPN_threshold     <- 0.80
-    HMO_threshold     <- 0.90
-
-    # Custom thresholds for Select networks
+    # Define threshold table
     Custom_Thresholds <- data.frame(
-      NTWK_CD = c("18M0"),
+      NTWK_CD   = c("18M0"),   # Extend as needed
       Threshold = c(0.70),
       stringsAsFactors = FALSE
     )
+    default_threshold <- 0.95
+    HMO_threshold     <- 0.90
+    HPN_threshold     <- 0.80
 
-    # Create list to collect flagged summaries
+    # Prepare flagged summary container
     flagged_summaries <- list()
 
-    # 1. BlueCard
-    if (exists("BlueCard_Total_Match")) {
-      pct <- BlueCard_Total_Match
-      if (!is.na(pct) && pct < default_threshold) {
-        flagged_summaries[["BlueCard"]] <- pct
+    for (nm in names(network_match_list)) {
+      pct <- network_match_list[[nm]]
+      if (is.na(pct)) next
+
+      # Determine threshold
+      threshold <- default_threshold
+
+      if (nm == "HMO") threshold <- HMO_threshold
+      if (nm == "HPN") threshold <- HPN_threshold
+
+      # Apply Select-specific thresholds
+      if (exists("Select_Parameters") &&
+          nm %in% Select_Parameters$Network_Code) {
+        ntwk_cd <- Select_Parameters %>%
+          filter(Network_Code == nm) %>%
+          pull(NTWK_CD) %>%
+          unique()
+        threshold_custom <- Custom_Thresholds %>%
+          filter(NTWK_CD %in% ntwk_cd) %>%
+          arrange(Threshold) %>%
+          pull(Threshold) %>%
+          first()
+        if (!is.na(threshold_custom)) threshold <- threshold_custom
+      }
+
+      # Flag if below threshold
+      if (pct < threshold) {
+        flagged_summaries[[nm]] <- pct
       }
     }
 
-    # 2. HPN
-    if (exists("HPN_Total_Match")) {
-      pct <- HPN_Total_Match
-      if (!is.na(pct) && pct < HPN_threshold) {
-        flagged_summaries[["HPN"]] <- pct
-      }
-    }
-
-    # 3. HMO
-    if (exists("HMO_Total_Match")) {
-      pct <- HMO_Total_Match
-      if (!is.na(pct) && pct < HMO_threshold) {
-        flagged_summaries[["HMO"]] <- pct
-      }
-    }
-
-    # 4. Select networks (loop over Select_Parameters$Network_Code)
-    if (exists("Select_Parameters")) {
-      for (net in Select_Parameters$Network_Code) {
-        var_name <- paste0(net, "_Total_Match")
-        if (exists(var_name, envir = .GlobalEnv)) {
-          pct <- get(var_name, envir = .GlobalEnv)
-          if (!is.na(pct)) {
-            # Use threshold from Custom_Thresholds or fallback
-            threshold <- Custom_Thresholds %>%
-              filter(NTWK_CD == net) %>%
-              pull(Threshold)
-            if (length(threshold) == 0) threshold <- default_threshold
-            if (pct < threshold) {
-              flagged_summaries[[net]] <- pct
-            }
-          }
-        }
-      }
-    }
-
-    # --- If any summary is flagged, reroute and build email body ---
+    # If flagged, override subject/email
     if (length(flagged_summaries) > 0) {
       Analyst_Email <- "NetworkAnalysisUnit@healthcare.com"
       subject_line  <- paste0("FLAGGED: Low Match Rate - ", Parameters$Values[1])
 
-      # Break out select vs other summaries
-      select_codes  <- intersect(names(flagged_summaries),
-                                 Select_Parameters$Network_Code)
-      other_codes   <- setdiff(names(flagged_summaries), select_codes)
+      # Split out Select vs Other
+      select_codes <- if (exists("Select_Parameters")) {
+        intersect(names(flagged_summaries),
+                  Select_Parameters$Network_Code)
+      } else character(0)
+      other_codes  <- setdiff(names(flagged_summaries), select_codes)
 
-      # Generate email list sections
+      # Build HTML lists
       summary_lines <- ""
       if (length(other_codes) > 0) {
         summary_lines <- paste0(
@@ -128,6 +116,7 @@ if (folder_moved) {
         )
       }
 
+      # Final email body
       bl_body <- paste0(
         "This disruption was flagged due to low match rates in the following network(s):<br><br>",
         summary_lines,
