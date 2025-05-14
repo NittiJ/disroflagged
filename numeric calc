@@ -1,0 +1,10 @@
+# Capture numeric match percent (raw)
+  numeric_match <- summary_report$Total_Matches / summary_report$Total_Records
+  network_match_list[[network]] <<- numeric_match
+
+
+
+
+# Capture numeric match percent (raw)
+  numeric_match <- summary_report$Total_Matches / summary_report$Total_Records
+  network_match_list[[network]] <<- numeric_match
