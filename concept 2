@@ -99,4 +99,58 @@ if (folder_moved) {
       # Break out select vs other summaries
       select_codes  <- intersect(names(flagged_summaries),
                                  Select_Parameters$Network_Code)
-      other_codes_
+      other_codes   <- setdiff(names(flagged_summaries), select_codes)
+
+      # Generate email list sections
+      summary_lines <- ""
+      if (length(other_codes) > 0) {
+        summary_lines <- paste0(
+          "<strong>Other Networks:</strong><br><ul>",
+          paste0(
+            "<li>", other_codes, ": ",
+            sprintf("%.2f%%", unlist(flagged_summaries[other_codes]) * 100),
+            "</li>", collapse = ""
+          ),
+          "</ul><br>"
+        )
+      }
+
+      select_lines <- ""
+      if (length(select_codes) > 0) {
+        select_lines <- paste0(
+          "<strong>Select Networks Breakdown:</strong><br><ul>",
+          paste0(
+            "<li>", select_codes, ": ",
+            sprintf("%.2f%%", unlist(flagged_summaries[select_codes]) * 100),
+            "</li>", collapse = ""
+          ),
+          "</ul><br>"
+        )
+      }
+
+      bl_body <- paste0(
+        "This disruption was flagged due to low match rates in the following network(s):<br><br>",
+        summary_lines,
+        select_lines,
+        "Original requestor:<br><strong>Email:</strong> ", Parameters$Values[3]
+      )
+    }
+  }
+
+  # --- Send the email ---
+  bl_em <- compose_email(body = md(bl_body))
+
+  if (zip_file_size <= max_size_bytes) {
+    bl_em <- bl_em %>%
+      add_attachment(file = zip_file)
+  }
+
+  bl_em %>% smtp_send(
+    from        = creds_key(id = "my_creds")$user,
+    to          = Analyst_Email,
+    subject     = subject_line,
+    credentials = creds_key(id = "my_creds")
+  )
+
+  fs::file_delete(zip_file)
+}
